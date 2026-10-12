@@ -14,7 +14,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { ensureBrowser, findBrowser, browserVersion, listTargets, newPage, closeTarget, DEFAULT_PORT } from '../src/cdp.mjs';
+import { ensureBrowser, findBrowser, browserVersion, listTargets, newPage, closeTarget, closeBrowser, DEFAULT_PORT } from '../src/cdp.mjs';
 import {
   attach, loginState, searchVideos, videoInfo, fetchTranscript, transcriptToMarkdown,
   playVideo, captureLoginQr, waitForLogin, parseDuration, DEFAULT_PORT as PORT,
@@ -168,16 +168,20 @@ async function cmdDoctor() {
 
 async function cmdLogin() {
   const cfg = await loadConfig();
-  const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir });
+  // 必须用 attachBili：新开的标签页是 about:blank 源，在它上面 fetch nav 接口会被 CORS 拒 →
+  // loginState 会误判成"未登录"，于是每次 login 都再走一遍扫码流程（实测踩到）。
+  const { cdp } = await attachBili(cfg);
   const before = await loginState(cdp).catch(() => null);
-  if (before?.isLogin) return say(`已登录：${before.uname}（mid ${before.mid}）`);
+  if (before?.isLogin) return say(`✓ 已登录：${before.uname}（mid ${before.mid}）——登录态在 ${cfg.profileDir}，不用再扫。`);
   await mkdir(OUT_DIR, { recursive: true });
   const file = join(OUT_DIR, 'login-qr.png');
-  const rect = await captureLoginQr(cdp, file);   // 返回的是二维码元素矩形，不是文件路径
-  say(`未登录。二维码已存到 ${file}（元素 ${Math.round(rect.width)}×${Math.round(rect.height)}）`);
-  say('用 B 站手机客户端扫码；也可以直接在弹出的浏览器窗口里扫码。');
+  // 注意返回形状是 { file, clipped, selector }——**不含** width/height
+  // （曾经按 {file,width,height} 用，结果输出里出现 "NaN×NaN"：猜库的返回形状是这类工具最常见的 bug）
+  const qr = await captureLoginQr(cdp, file);
+  say(`未登录。二维码已存到 ${file}${qr.clipped ? `（已裁到二维码区域：${qr.selector}）` : '（未定位到二维码元素，存的是整页截图）'}`);
+  say('用 B 站手机客户端扫码；也可以直接在浏览器窗口里扫。');
   const res = await waitForLogin(cdp, { timeoutMs: Number(flags.timeout ?? 300) * 1000 });
-  say(res.ok ? `✓ 登录成功：${res.uname}` : `等待超时（${JSON.stringify(res)}）。可以再跑一次 bili-learn login。`);
+  say(res.ok ? `✓ 登录成功：${res.uname}（登录态保存在 ${cfg.profileDir}，下次不用再扫）` : `等待超时（${JSON.stringify(res)}）。可以再跑一次 bili-learn login。`);
 }
 
 async function cmdSearch() {
@@ -410,12 +414,11 @@ async function cmdSpend() {
 /** 关掉 CDP 浏览器（用完就收，别把窗口留在桌面上）。 */
 async function cmdClose() {
   const cfg = await loadConfig();
-  const v = await browserVersion(cfg.port);
-  if (!v) return say(`端口 ${cfg.port} 上没有运行中的浏览器`);
-  const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir, reusePage: 'bilibili.com' }).catch(() => ({ cdp: null }));
-  if (cdp) { await cdp.send('Browser.close').catch(() => {}); }
-  await sleep(500);
-  say((await browserVersion(cfg.port)) ? '关闭指令已发送（浏览器可能还在退出）' : '已关闭浏览器');
+  if (!(await browserVersion(cfg.port))) return say(`端口 ${cfg.port} 上没有运行中的浏览器`);
+  // 直接在浏览器级关闭，不要为了关闭而 attach 一个新标签页（那会平白多开一个窗口）
+  await closeBrowser(cfg.port, cfg.profileDir).catch(() => {});
+  await sleep(600);
+  say((await browserVersion(cfg.port)) ? '关闭指令已发送（浏览器可能还在退出）' : `✓ 已关闭浏览器`);
 }
 
 const commands = { doctor: cmdDoctor, login: cmdLogin, search: cmdSearch, transcript: cmdTranscript, frames: cmdFrames, watch: cmdWatch, prompt: cmdPrompt, spend: cmdSpend, close: cmdClose };

@@ -156,6 +156,20 @@
 
 ---
 
+## 六、与库对接（"看不见的契约"）
+
+### 21. 猜库的返回形状 → 用户可见输出里冒出 `NaN` / `undefined`
+- **现象**：`login` 打印「二维码已存到 …（元素 **NaN×NaN**）」
+- **真因**：`captureLoginQr` 实际返回 `{ file, clipped, selector }`，我按 `{ file, width, height }` 用了。
+  `Math.round(undefined)` 就是 `NaN`，而模板字符串**不会报错**，于是静默输出垃圾
+- **修法**：① 调库函数前先看它的 `return`（读一行就够）；② **凡是要打印外部返回值，先 `Number.isFinite` 校验**；
+  ③ **输出里出现 `NaN/undefined` 就是契约没对齐的告警**，别当小瑕疵放过
+- **同源教训（同一轮实测抓到的）**：`login` 用的是 `attach` 而不是 `attachBili` → 新标签页是 `about:blank` 源，
+  页面内 fetch 被 CORS 拒 → `loginState` **永远**返回"未登录"，于是**每次 login 都白弹一次二维码**。
+  "源不对"这类错会伪装成业务错（见 1b），而正确做法只有一条：**所有走页面内 fetch 的命令都必须先确保落在目标源上**
+
+---
+
 ## 用法建议
 
 如果你要基于这份表做自己的工具，最有价值的三条是：
