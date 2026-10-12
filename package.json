@@ -1,0 +1,16 @@
+{
+  "name": "bili-learn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "把 B 站视频的官方 AI 字幕变成可检索的学习材料，并把板书帧按预算读进笔记里（零依赖，本地优先，不调用任何模型）",
+  "type": "module",
+  "bin": { "bili-learn": "./bin/bili-learn.mjs" },
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "doctor": "node bin/bili-learn.mjs doctor",
+    "frames:pick": "node bin/bili-learn.mjs frames --pick"
+  },
+  "files": ["bin", "src", "docs", "README.md", "LICENSE"],
+  "keywords": ["bilibili", "subtitles", "transcript", "notes", "cdp", "zero-dependency", "local-first"],
+  "license": "MIT"
+}
