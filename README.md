@@ -34,7 +34,7 @@ data/out/transcripts/<bvid>.md
 > （实测：指纹 cookie 已下发也照拒）。所以 `login` 不是可选项。
 
 ```powershell
-git clone <this repo> ; cd bili-learn
+git clone https://github.com/lcx03876-hue/bili-learn.git ; cd bili-learn
 node bin/bili-learn.mjs doctor                 # 环境自检
 node bin/bili-learn.mjs login                  # 扫码登录（登录态只存在本机 data/profile）
 node bin/bili-learn.mjs search "机器学习 入门"  # 找视频

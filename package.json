@@ -12,5 +12,12 @@
   },
   "files": ["bin", "src", "docs", "README.md", "LICENSE"],
   "keywords": ["bilibili", "subtitles", "transcript", "notes", "cdp", "zero-dependency", "local-first"],
+  "author": "lcx03876-hue",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lcx03876-hue/bili-learn.git"
+  },
+  "homepage": "https://github.com/lcx03876-hue/bili-learn#readme",
+  "bugs": { "url": "https://github.com/lcx03876-hue/bili-learn/issues" },
   "license": "MIT"
 }
