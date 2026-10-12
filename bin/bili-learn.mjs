@@ -68,7 +68,10 @@ const readJson = async (p, d) => { try { return JSON.parse(await readFile(p, 'ut
 
 async function loadConfig() {
   const cfg = { ...DEFAULT_CONFIG, ...(await readJson(CONFIG_FILE, {})) };
-  if (!existsSync(CONFIG_FILE)) { await mkdir(DATA, { recursive: true }); await writeFile(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); }
+  // 环境变量覆盖：方便指向一个已登录的 profile 做复用/验证
+  if (process.env.BILI_LEARN_PROFILE) cfg.profileDir = process.env.BILI_LEARN_PROFILE;
+  if (process.env.BILI_LEARN_PORT) cfg.port = Number(process.env.BILI_LEARN_PORT);
+  if (!existsSync(CONFIG_FILE)) { await mkdir(DATA, { recursive: true }); await writeFile(CONFIG_FILE, JSON.stringify({ ...DEFAULT_CONFIG }, null, 2), 'utf8'); }
   return cfg;
 }
 function isPeakNow(cfg, d = new Date()) {
@@ -94,6 +97,20 @@ function parseTarget(input) {
   if (!bv) return null;
   const p = Number((s.match(/[?&]p=(\d+)/) ?? [])[1] ?? flags.p ?? 1);
   return { bvid: bv, p };
+}
+
+/**
+ * 连上浏览器，并**确保页面落在 bilibili.com 源上**。
+ *
+ * 坑（踩过）：新开标签页是 about:blank，在它上面做 in-page fetch 会被 CORS 拒绝
+ * （`TypeError: Failed to fetch`）。B 站的接口必须从 bilibili.com 的页面上下文里发，
+ * 所以这里先检查 location，必要时先导航到首页。
+ */
+async function attachBili(cfg, reusePage = 'bilibili.com') {
+  const session = await attach({ port: cfg.port, profileDir: cfg.profileDir, reusePage });
+  const href = await session.cdp.evaluate('location.href').catch(() => '');
+  if (!/bilibili\.com/.test(href)) await session.cdp.navigate('https://www.bilibili.com/').catch(() => {});
+  return session;
 }
 
 // ───────────────────────────── 子命令 ─────────────────────────────
@@ -132,7 +149,7 @@ async function cmdSearch() {
   const cfg = await loadConfig();
   const kw = flags._.join(' ');
   if (!kw) return say('用法: bili-learn search <关键词> [--limit 12]');
-  const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir, reusePage: 'search.bilibili.com' });
+  const { cdp } = await attachBili(cfg, 'search.bilibili.com');
   const items = await searchVideos(cdp, kw, { limit: Number(flags.limit ?? 12) });
   for (const r of items) say(`${r.bvid}  ${r.durText.padStart(8)}  ${r.title.slice(0, 60)}`);
   say(`\n（${items.length} 条。下一步：bili-learn transcript <bvid>）`);
@@ -142,9 +159,15 @@ async function cmdTranscript() {
   const cfg = await loadConfig();
   const target = parseTarget(flags._[0] ?? flags.bvid);
   if (!target) return say('用法: bili-learn transcript <bvid|URL> [--p N]');
-  const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir, reusePage: 'bilibili.com' });
+  const { cdp } = await attachBili(cfg);
   const info = await fetchTranscript(cdp, target.bvid, { p: target.p });
-  if (!info.lines?.length) return say(`没有字幕轨（code=${info.code ?? '-'} ${info.note ?? info.message ?? ''}）——本工具依赖官方字幕，不做语音识别。`);
+  if (!info.lines?.length) {
+    // 412 是 B 站风控：**未登录的干净 profile 连 view/subtitle 接口都会被拒**（实测：指纹 cookie 有了也照拒）。
+    const hint = [undefined, 0, -999, -412, -404].includes(info.code)
+      ? '\n提示：code=-999/-412 通常是被风控拦下（返回 HTML 而非 JSON）。**先跑 `bili-learn login` 扫码登录**再试。'
+      : '';
+    return say(`没有字幕轨（code=${info.code ?? '-'} ${info.note ?? info.message ?? ''}）${hint}\n本工具依赖官方字幕，不做语音识别。`);
+  }
   await mkdir(join(OUT_DIR, 'transcripts'), { recursive: true });
   const file = join(OUT_DIR, 'transcripts', `${target.bvid}${info.pageCount > 1 ? `-P${info.p}` : ''}.md`);
   await writeFile(file, transcriptToMarkdown(info, info.lines), 'utf8');
@@ -263,7 +286,18 @@ async function cmdSpend() {
   if (!acct.error) say(`\n（账号账本：余额 ¥${acct.lastBalance}，今日总消费 ¥${acct.todayUsage}）`);
 }
 
-const commands = { doctor: cmdDoctor, login: cmdLogin, search: cmdSearch, transcript: cmdTranscript, frames: cmdFrames, watch: cmdWatch, prompt: cmdPrompt, spend: cmdSpend };
+/** 关掉 CDP 浏览器（用完就收，别把窗口留在桌面上）。 */
+async function cmdClose() {
+  const cfg = await loadConfig();
+  const v = await browserVersion(cfg.port);
+  if (!v) return say(`端口 ${cfg.port} 上没有运行中的浏览器`);
+  const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir, reusePage: 'bilibili.com' }).catch(() => ({ cdp: null }));
+  if (cdp) { await cdp.send('Browser.close').catch(() => {}); }
+  await sleep(500);
+  say((await browserVersion(cfg.port)) ? '关闭指令已发送（浏览器可能还在退出）' : '已关闭浏览器');
+}
+
+const commands = { doctor: cmdDoctor, login: cmdLogin, search: cmdSearch, transcript: cmdTranscript, frames: cmdFrames, watch: cmdWatch, prompt: cmdPrompt, spend: cmdSpend, close: cmdClose };
 
 if (commands[cmd]) {
   await commands[cmd]();
@@ -279,6 +313,7 @@ if (commands[cmd]) {
   watch <bvid|URL>           真实播放（--rate / --mute / --max-min）⚠️ 用户协议灰区
   prompt <transcript.md>     生成"消化提示词"，交给你的模型（本工具不代调）
   spend [--add-yuan N]       看/记本地账本（--clear-vision 撤读图占用）
+  close                      关掉 CDP 浏览器（用完收起窗口）
 
 数据都在 ${DATA}（登录态在 data/profile，勿外传）。详见 README.md。`);
 }

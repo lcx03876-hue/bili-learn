@@ -30,6 +30,9 @@ data/out/transcripts/<bvid>.md
 
 ## 快速开始
 
+> **先登录**：未登录的干净 profile 会被 B 站风控拦下——连 `view`/字幕接口都返回 412
+> （实测：指纹 cookie 已下发也照拒）。所以 `login` 不是可选项。
+
 ```powershell
 git clone <this repo> ; cd bili-learn
 node bin/bili-learn.mjs doctor                 # 环境自检
@@ -40,6 +43,9 @@ node bin/bili-learn.mjs prompt data/out/transcripts/BV18LNPz4EeU.md   # 生成�
 ```
 
 需要 **Node >= 22**（用到内置 `WebSocket` + `fetch`）和 **Chrome 或 Edge**（不额外下载浏览器）。
+
+> 已有别的 DSH/自动化 profile 且已登录？可以用环境变量复用它，不必重新扫码：
+> `$env:BILI_LEARN_PROFILE='<已登录的 profile 目录>'; $env:BILI_LEARN_PORT='9444'`
 
 ## 亮点（每条都对应一个坑，详见 `docs/FAILURE-MODES.md`）
 
