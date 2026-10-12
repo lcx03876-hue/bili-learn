@@ -14,6 +14,13 @@ data/out/transcripts/<bvid>.md
    ↑  frames --pick     ← 板书帧按"在场时长"挑选 + 先算钱再读图
 ```
 
+![读图预算闸门：按"在场时长"挑关键帧，先算钱再决定读几张](docs/images/frames-pick.png)
+
+![笔记结构：一句话结论 / 带时间戳的核心内容 / 可复用要点 / 存疑](docs/images/note-structure.png)
+
+> 两张图都是**真实输出**，不是效果图：上面是 `frames --pick`，下面是它配套的笔记结构；
+> 样例全文在 [`examples/`](examples/)。
+
 ## 它解决的问题
 
 **视频里的知识，默认是留不下来的。** 你看完 40 分钟讲得挺好，一周后只剩"好像讲过什么"。
