@@ -19,7 +19,7 @@ import {
   attach, loginState, searchVideos, videoInfo, fetchTranscript, transcriptToMarkdown,
   playVideo, captureLoginQr, waitForLogin, parseDuration, DEFAULT_PORT as PORT,
 } from '../src/bili.mjs';
-import { pickKeyFrames, stampToSeconds, stampOf } from '../src/frames.mjs';
+import { pickKeyFrames, stampToSeconds, stampOf, createFrameGrabber, framesDirFor } from '../src/frames.mjs';
 import { estimateVisionYuan, estimateDigestYuan, readAccountUsage, today } from '../src/cost.mjs';
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -35,11 +35,13 @@ const DEFAULT_CONFIG = {
   rate: 1.5,
   mute: true,
   dailyBudgetYuan: 1,
+  // 注意：这里的键名与 src/frames.mjs 的 createFrameGrabber 参数**逐字对应**
+  // （曾经用过 sampleMs，结果改了配置不生效——配置键名和库参数名不一致是这类工具的经典坑）
   frames: {
-    sampleMs: 6000,
-    minGapMs: 8000,
-    maxFrames: 40,
-    changeThreshold: 3,
+    intervalMs: 6000,        // 多久采一次缩略图做差分
+    minGapMs: 8000,          // 两张之间至少隔多久（实际会被自动放大到铺满整片，见 watch）
+    maxFrames: 40,           // 每条视频最多存几张
+    changeThreshold: 3,      // 画面变化阈值，越大越省
     width: 1600,
     height: 900,
     quality: 0.9,
@@ -55,23 +57,54 @@ function parseFlags(args) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a.startsWith('--')) {
+      const body = a.slice(2);
+      const eq = body.indexOf('=');
+      if (eq > 0) { out[body.slice(0, eq)] = body.slice(eq + 1); continue; }   // 支持 --want=8（很多人默认这么写）
       const next = args[i + 1];
-      const key = a.slice(2);
-      if (next && !next.startsWith('--')) { out[key] = next; i++; } else out[key] = true;
+      if (next !== undefined && !next.startsWith('--')) { out[body] = next; i++; } else out[body] = true;
     } else out._.push(a);
   }
   return out;
 }
 const flags = parseFlags(argv.slice(1));
 const say = (...p) => console.log(...p);
-const readJson = async (p, d) => { try { return JSON.parse(await readFile(p, 'utf8')); } catch { return d; } };
+// 读 JSON：必须容忍 BOM。Windows 记事本 / PowerShell 的 `Set-Content -Encoding UTF8` 都会写 BOM，
+// 而 JSON.parse 遇到 BOM 直接抛错 → 若在 catch 里回退成默认值，用户手工编辑的整份配置会被**静默重置**。
+// （这个坑是真实踩到的：给 config.json 加了一个自定义键，跑一条命令后键没了、配置回到默认。）
+const readJson = async (p, d) => {
+  try {
+    let s = await readFile(p, 'utf8');
+    if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
+    return JSON.parse(s);
+  } catch { return d; }
+};
+
+/** 深合并：配置里新增的嵌套键（如 frames.intervalMs）对老配置文件也要生效。
+ *  踩过的坑：`{...默认, ...文件}` 会把整个 frames 对象替换掉，于是新键全是 undefined——
+ *  用户改了配置没反应、日志打印 "undefinedms"，而且完全不报错。 */
+function deepMerge(base, over) {
+  if (!over || typeof over !== 'object' || Array.isArray(over)) return over === undefined ? base : over;
+  const out = { ...base };
+  for (const [k, v] of Object.entries(over)) {
+    out[k] = (v && typeof v === 'object' && !Array.isArray(v) && base?.[k] && typeof base[k] === 'object')
+      ? deepMerge(base[k], v)
+      : v;
+  }
+  return out;
+}
 
 async function loadConfig() {
-  const cfg = { ...DEFAULT_CONFIG, ...(await readJson(CONFIG_FILE, {})) };
+  const onDisk = await readJson(CONFIG_FILE, null);
+  const merged = deepMerge(DEFAULT_CONFIG, onDisk ?? {});
+  const cfg = { ...merged };
   // 环境变量覆盖：方便指向一个已登录的 profile 做复用/验证
   if (process.env.BILI_LEARN_PROFILE) cfg.profileDir = process.env.BILI_LEARN_PROFILE;
   if (process.env.BILI_LEARN_PORT) cfg.port = Number(process.env.BILI_LEARN_PORT);
-  if (!existsSync(CONFIG_FILE)) { await mkdir(DATA, { recursive: true }); await writeFile(CONFIG_FILE, JSON.stringify({ ...DEFAULT_CONFIG }, null, 2), 'utf8'); }
+  // 首次运行，或默认值里有文件里缺的键 → 写回（让新增配置项在文件里可见；不删用户已有的键）
+  if (!onDisk || JSON.stringify(merged) !== JSON.stringify(onDisk)) {
+    await mkdir(DATA, { recursive: true });
+    await writeFile(CONFIG_FILE, JSON.stringify(merged, null, 2), 'utf8');
+  }
   return cfg;
 }
 function isPeakNow(cfg, d = new Date()) {
@@ -138,11 +171,13 @@ async function cmdLogin() {
   const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir });
   const before = await loginState(cdp).catch(() => null);
   if (before?.isLogin) return say(`已登录：${before.uname}（mid ${before.mid}）`);
+  await mkdir(OUT_DIR, { recursive: true });
   const file = join(OUT_DIR, 'login-qr.png');
-  const qr = await captureLoginQr(cdp, file);
-  say(`未登录。用 B 站手机客户端扫码：${qr.file}`);
+  const rect = await captureLoginQr(cdp, file);   // 返回的是二维码元素矩形，不是文件路径
+  say(`未登录。二维码已存到 ${file}（元素 ${Math.round(rect.width)}×${Math.round(rect.height)}）`);
+  say('用 B 站手机客户端扫码；也可以直接在弹出的浏览器窗口里扫码。');
   const res = await waitForLogin(cdp, { timeoutMs: Number(flags.timeout ?? 300) * 1000 });
-  say(res.ok ? `登录成功：${res.uname}` : `等待超时：${JSON.stringify(res)}`);
+  say(res.ok ? `✓ 登录成功：${res.uname}` : `等待超时（${JSON.stringify(res)}）。可以再跑一次 bili-learn login。`);
 }
 
 async function cmdSearch() {
@@ -182,18 +217,59 @@ async function cmdTranscript() {
 async function cmdFrames() {
   const cfg = await loadConfig();
   const dirArg = flags.dir ?? flags._[0];
+
+  // 单独撤销读图占用（不需要 --pick）
+  if (flags.unbook) {
+    const s = await loadSpend();
+    const before = s.entries.length;
+    s.entries = s.entries.filter((e) => e.kind !== 'vision');
+    await saveSpend(s);
+    return say(`已撤销 ${before - s.entries.length} 笔读图占用。`);
+  }
+
+  const dirs = (await readdir(FRAMES_DIR, { withFileTypes: true }).catch(() => [])).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+
+  // ── 只列目录（默认）：不做任何成本计算，方便先看看手上有什么 ───────────────
+  if (!flags.pick) {
+    if (!dirs.length) return say(`还没有抓帧（${FRAMES_DIR}）。先跑 bili-learn watch <bvid> 抓帧，或把 .jpg 放进去。`);
+    const out = [];
+    for (const dir of dirs) {
+      if (dirArg && !dir.startsWith(String(dirArg))) continue;
+      const full = join(FRAMES_DIR, dir);
+      const files = (await readdir(full).catch(() => [])).filter((f) => f.endsWith('.jpg')).sort();
+      const mb = files.length ? (await Promise.all(files.map(async (f) => (await stat(join(full, f)).catch(() => ({ size: 0 }))).size))).reduce((a, b) => a + b, 0) / 1024 / 1024 : 0;
+      out.push(`${dir}  ${files.length} 张  ${mb.toFixed(1)}MB`);
+      if (flags.all) for (const f of files) out.push(`  ${join(full, f)}`);
+    }
+    out.push('\n挑关键帧并算钱：frames --pick [--dir <名字>] [--want N] [--book]');
+    return say(out.join('\n'));
+  }
+
+  // ── 读图预算闸门：挑关键帧 → 先算钱 → 再决定读几张 ─────────────────────────
   const budget = Number(flags['budget-yuan'] ?? cfg.dailyBudgetYuan);
   const spend = await loadSpend();
   const remaining = Math.max(0, budget - committedYuan(spend));
   const peak = isPeakNow(cfg);
   const perImage = estimateVisionYuan(1, cfg, { peak });
+  const out = [];
 
-  const dirs = (await readdir(FRAMES_DIR, { withFileTypes: true }).catch(() => [])).filter((d) => d.isDirectory()).map((d) => d.name).sort();
-  const target = dirArg ? [String(dirArg).replace(/^.*[\\/]/, '')] : dirs.slice(-1);
-  if (!target.length || !target[0]) return say(`没有抓帧目录（${FRAMES_DIR}）。抓帧由 watch/loop 产生，或你自己放 .jpg 进去。`);
+  // 默认只处理**最近抓的那个目录**：一次消化通常只针对一条视频，
+  // 而且用户刚跑完 watch，期望的就是刚抓的那条（按 mtime，而不是目录名字母序）。
+  let target;
+  if (dirArg) {
+    target = [String(dirArg).replace(/^.*[\\/]/, '')];
+  } else {
+    let best = null;
+    for (const d of dirs) {
+      const st = await stat(join(FRAMES_DIR, d)).catch(() => null);
+      if (st && (!best || st.mtimeMs > best.mtimeMs)) best = { d, mtimeMs: st.mtimeMs };
+    }
+    target = best ? [best.d] : [];
+    if (target.length && dirs.length > 1) out.push(`（未指定 --dir，默认用最近抓的 ${target[0]}；共 ${dirs.length} 个目录）`);
+  }
+  if (!target.length || !target[0]) return say(`没有抓帧目录（${FRAMES_DIR}）。抓帧由 watch 产生，或你自己放 .jpg 进去。`);
 
   const want = Math.max(1, Number(flags.want ?? 8));
-  const out = [];
   for (const dir of target) {
     const full = join(FRAMES_DIR, dir);
     const files = (await readdir(full).catch(() => [])).filter((f) => f.endsWith('.jpg')).sort();
@@ -222,31 +298,76 @@ async function cmdFrames() {
     }
   }
   if (flags.book) { await saveSpend(spend); out.push('\n已记入本工具账本（data/spend.json）；撤销：bili-learn spend --clear-vision'); }
-  if (flags.unbook || flags['clear-vision']) {
-    const s = await loadSpend();
-    const before = s.entries.length;
-    s.entries = s.entries.filter((e) => e.kind !== 'vision');
-    await saveSpend(s);
-    out.push(`\n已撤销 ${before - s.entries.length} 笔读图占用。`);
-  }
   say(out.join('\n'));
 }
+
+/** playVideo 的状态码 → 说人话（原始状态码见 src/bili.mjs，'timeout' = 到时间上限而不是出错）。 */
+const STATUS_TEXT = {
+  completed: '✓ 看完了',
+  timeout: '⏱ 到时间上限（--max-min），视频没放完——加 --max-min 或用 --rate 加速可续',
+  stopped: '⏸ 被外部条件停止（shouldStop）',
+  stalled: '⚠️ 反复卡住，已放弃（网络/限流？稍后再试）',
+  'vip-bangumi': '⛔ 番剧/会员专享，非会员不可播（换了也白等）',
+  unavailable: '⛔ 播不了（页面异常或稿件不可用）',
+  error: '⛔ 播放出错',
+};
 
 async function cmdWatch() {
   const cfg = await loadConfig();
   const target = parseTarget(flags._[0] ?? flags.bvid);
-  if (!target) return say('用法: bili-learn watch <bvid|URL> [--rate 1.5] [--mute] [--max-min 60]');
-  const { cdp } = await attach({ port: cfg.port, profileDir: cfg.profileDir, reusePage: 'bilibili.com' });
-  say('开始真实播放（会占满这一条视频的时长）。⚠️ 自动化播放属于 B 站用户协议的灰区，请自行斟酌频率与账号风险。');
+  if (!target) return say('用法: bili-learn watch <bvid|URL> [--rate 1.5] [--mute] [--max-min 60] [--no-frames]');
+  const { cdp } = await attachBili(cfg);
+  say('开始真实播放。⚠️ 自动化播放属于 B 站用户协议的灰区，请自行斟酌频率与账号风险。');
+
+  // 先拿时长：抓帧间隔要按"铺满整片"自动放大（帧数与成本不变，覆盖从开头几分钟变成整条视频）
+  const info = await videoInfo(cdp, target.bvid, { p: target.p }).catch(() => null);
+  const wantFrames = !flags['no-frames'];
+  let grabber = null;
+  if (wantFrames && info?.ok) {
+    const dir = framesDirFor(FRAMES_DIR, target.bvid, target.p, info.pageCount);
+    await mkdir(dir, { recursive: true });
+    const sec = Number(info.duration ?? 0);
+    const spread = sec > 0 ? Math.ceil((sec * 1000) / Math.max(1, cfg.frames.maxFrames)) : 0;
+    const minGapMs = Math.max(Number(cfg.frames.minGapMs ?? 8000), spread);
+    grabber = createFrameGrabber(cdp, {
+      dir,
+      intervalMs: Number(cfg.frames.intervalMs ?? 6000),
+      minGapMs,
+      maxFrames: Number(cfg.frames.maxFrames ?? 40),
+      changeThreshold: Number(cfg.frames.changeThreshold ?? 3),
+      width: Number(cfg.frames.width ?? 1600),
+      height: Number(cfg.frames.height ?? 900),
+      quality: Number(cfg.frames.quality ?? 0.9),
+      totalSec: sec,
+    });
+    say(`抓帧：${dir}（每 ${cfg.frames.intervalMs}ms 采一次、间隔 ≥${Math.round(minGapMs / 1000)}s、最多 ${cfg.frames.maxFrames} 张）`);
+  }
+
+  let lastShown = -99;
   const res = await playVideo(cdp, target.bvid, {
     p: target.p,
     rate: Number(flags.rate ?? cfg.rate),
     mute: flags.unmute ? false : cfg.mute,
     pollMs: 2000,
     maxWallMinutes: Number(flags['max-min'] ?? 240),
-    onTick: (t) => { if (Math.floor(t.t) % 60 < 2) say(`  ${Math.floor(t.t)}s / ${Math.floor(t.dur)}s ${t.quality ?? ''}`); },
+    onTick: async (t) => {
+      if (grabber) await grabber.tick(t.t).catch(() => {});
+      const now = Math.floor(t.t);
+      if (now - lastShown >= 60) {          // 每分钟报一次（原来用 % 60 判断，遇到跳过整点会一直不打印）
+        lastShown = now;
+        say(`  ${now}s / ${Math.floor(t.dur)}s ${t.quality ?? ''}${grabber ? `　已存 ${grabber.state.saved} 张` : ''}`);
+      }
+    },
   });
-  say(`结果：${res.status}（看了 ${res.watched ?? 0}s）`);
+
+  say(`结果：${STATUS_TEXT[res.status] ?? res.status}（播放 ${Math.floor(res.watched ?? 0)}s${res.dur ? ` / 全长 ${Math.floor(res.dur)}s` : ''}${res.quality ? `　${res.quality}` : ''}）`);
+  if (grabber) {
+    say(`抓帧完成：${grabber.state.saved} 张${grabber.state.skippedReason ? `（停止原因：${grabber.state.skippedReason}）` : ''}`);
+    const dirName = framesDirFor('.', target.bvid, target.p, info?.pageCount ?? 1).replace(/^[.\\/]+/, '');
+    if (grabber.state.saved === 0) say('一张都没存：画面几乎没变（阈值偏高），或播放没真正开始。');
+    else say(`下一步：bili-learn frames --pick --dir ${dirName} --book`);
+  }
+  say('（浏览器留着方便你看；收工：bili-learn close）');
 }
 
 /** 生成"消化提示词"：本工具不调用模型，只把提示词和数据准备好，交给你的 agent / 人。 */

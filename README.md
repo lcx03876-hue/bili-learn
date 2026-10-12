@@ -45,8 +45,8 @@ git clone https://github.com/lcx03876-hue/bili-learn.git ; cd bili-learn
 node bin/bili-learn.mjs doctor                 # 环境自检
 node bin/bili-learn.mjs login                  # 扫码登录（登录态只存在本机 data/profile）
 node bin/bili-learn.mjs search "机器学习 入门"  # 找视频
-node bin/bili-learn.mjs transcript BV18LNPz4EeU
-node bin/bili-learn.mjs prompt data/out/transcripts/BV18LNPz4EeU.md   # 生成消化提示词
+node bin/bili-learn.mjs transcript BV1ZK7N6sEiU
+node bin/bili-learn.mjs prompt data/out/transcripts/BV1ZK7N6sEiU.md   # 生成消化提示词
 ```
 
 需要 **Node >= 22**（用到内置 `WebSocket` + `fetch`）和 **Chrome 或 Edge**（不额外下载浏览器）。
@@ -60,7 +60,7 @@ node bin/bili-learn.mjs prompt data/out/transcripts/BV18LNPz4EeU.md   # 生成�
 2. **所有 B 站请求在页面内发出**——带登录态，绕开服务端直连的 412 反爬与 wbi 签名
 3. **番剧/独家稿件自动识别**——它们会 302 到 `/bangumi/`，而**试看只有 6 分钟**（实测 `duration=360s`），
    播放器永远 `readyState=0`；识别到就跳过，不空等
-4. **抓帧按画面变化抽，不整段录屏**——每 `sampleMs` 采一张 32×18 缩略图做差分，只有画面真的变了才存全分辨率图
+4. **抓帧按画面变化抽，不整段录屏**——每 `intervalMs` 采一张 32×18 缩略图做差分，只有画面真的变了才存全分辨率图
 5. **关键帧按"在场时长"挑**——一张画面停留越久越可能是完整板书；过渡帧在场极短，读它们纯属浪费
 6. **读图前先算钱**——一张 1280×720 的 PPT 帧约 1300 token；额度不足**自动降级**，余量为 0 直接拒绝
 7. **零依赖、不绑定模型**——工具只产出转写/关键帧/提示词，"消化"这一步交给你的 agent 或你本人
@@ -74,14 +74,15 @@ node bin/bili-learn.mjs prompt data/out/transcripts/BV18LNPz4EeU.md   # 生成�
 | `login` | 扫码登录，登录态存 `data/profile`（**不要把这个目录传出去**） |
 | `search <关键词>` | 搜视频，列出 bvid / 时长 / 标题 |
 | `transcript <bvid\|URL> [--p N]` | 取官方 AI 字幕 → `data/out/transcripts/*.md`，报告覆盖率 |
+| `frames` | 列出已抓的帧目录（张数/体积） |
 | `frames --dir <名字> --pick [--want N] [--book]` | 挑关键帧 + 算读图成本 + 检查预算 |
-| `watch <bvid\|URL> [--rate 1.5] [--mute]` | 真实播放（抓帧依赖它；⚠️ 见下方风险提示） |
+| `watch <bvid\|URL> [--rate 1.5] [--mute]` | 真实播放**并抓帧**到 `data/frames/<bvid>/`（⚠️ 见下方风险提示） |
 | `prompt <transcript.md>` | 生成"消化提示词"，交给你的模型 |
 | `spend [--add-yuan N] [--clear-vision]` | 本地账本：今天用了多少、撤掉读图占用 |
 
 ```powershell
 # 读图闸门示例
-node bin/bili-learn.mjs frames --dir BV13r95BFEXU --pick --want 6 --book
+node bin/bili-learn.mjs frames --dir BV1Vjug6yEeB --pick --want 6 --book
 #   === BV13r95BFEXU（共 40 张，想读 6）===
 #     路径…\000037.jpg   @0037  在场 19s
 #     ...
@@ -97,7 +98,7 @@ node bin/bili-learn.mjs spend --clear-vision     # 读完撤销占用
   "mute": true,
   "dailyBudgetYuan": 1,         // 每日预算：读图/消化都记在这个数下面
   "frames": {
-    "sampleMs": 6000,           // 多久采一次缩略图（压力）
+    "intervalMs": 6000,          // 多久采一次缩略图做差分（键名与 src/frames.mjs 参数一致）
     "minGapMs": 8000,           // 两张之间最少隔多久（覆盖下限）
     "maxFrames": 40,            // 每条视频最多存几张
     "changeThreshold": 3,       // 画面变化阈值（越大越省）
@@ -109,6 +110,11 @@ node bin/bili-learn.mjs spend --clear-vision     # 读完撤销占用
 
 > 抓帧的**实际间隔会被自动放大到"铺满整条视频"**：`minGapMs = max(配置值, 时长÷maxFrames)`。
 > 帧数与成本不变，覆盖从"开头 5 分钟"变成整条视频。核对：`frames --pick` 里每张的"在场"时长。
+
+配置是**深合并**的：以后版本新增的键会对你已有的配置文件自动生效，你自己加的键也不会被删。
+文件用**记事本编辑也没问题**（读取时会容忍 UTF-8 BOM——这一点很多工具都做错了，
+BOM 会让 `JSON.parse` 抛错，然后"回退默认值"就把你的配置悄悄重置了；见
+[`FAILURE-MODES.md`](docs/FAILURE-MODES.md) 第 19、20 条）。
 
 ## 它**不做**什么（重要）
 
@@ -134,6 +140,7 @@ node bin/bili-learn.mjs spend --clear-vision     # 读完撤销占用
 | [`docs/COST-ENGINEERING.md`](docs/COST-ENGINEERING.md) | 成本工程：双轨记账、预算闸门、自动降级 |
 | [`docs/MEASUREMENTS.md`](docs/MEASUREMENTS.md) | 实测数据与复现方法（分区可用率 / 字幕覆盖率 / 上下文开销 / 缓存命中） |
 | [`examples/`](examples/) | 一段真实字幕 + 一篇真实笔记 |
+| [`tools/render-readme.mjs`](tools/render-readme.mjs) | 重画本 README 的两张配图（`npm run readme:images`）：真跑 CLI 取输出 → HTML 卡片 → headless 截图 |
 
 ## License
 

@@ -62,7 +62,11 @@ const EMPTY = () => ({ day: today(), measuredYuan: 0, runs: [], reservations: []
 export async function loadCost(file) {
   let data;
   try {
-    data = JSON.parse(await readFile(file, 'utf8'));
+    let text = await readFile(file, 'utf8');
+    // 记事本 / PowerShell `Set-Content -Encoding UTF8` 会写 BOM，而 JSON.parse 遇 BOM 直接抛错 →
+    // 若不处理，用户手工改过的账本会被静默丢弃（回退成空账本）。
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    data = JSON.parse(text);
   } catch {
     data = EMPTY();
   }

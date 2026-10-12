@@ -8,9 +8,10 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "doctor": "node bin/bili-learn.mjs doctor",
-    "frames:pick": "node bin/bili-learn.mjs frames --pick"
+    "frames:pick": "node bin/bili-learn.mjs frames --pick",
+    "readme:images": "node tools/render-readme.mjs"
   },
-  "files": ["bin", "src", "docs", "README.md", "LICENSE"],
+  "files": ["bin", "src", "tools", "docs", "README.md", "LICENSE"],
   "keywords": ["bilibili", "subtitles", "transcript", "notes", "cdp", "zero-dependency", "local-first"],
   "author": "lcx03876-hue",
   "repository": {
