@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>bili-learn · 学习仪表盘</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="mark"></div>
+      <div><b>bili-learn</b><span>local dashboard</span></div>
+    </div>
+
+    <nav id="nav">
+      <button data-tab="overview" class="on"><span class="n">01</span>总览</button>
+      <button data-tab="videos"><span class="n">02</span>视频</button>
+      <button data-tab="notes"><span class="n">03</span>笔记</button>
+      <button data-tab="costs"><span class="n">04</span>成本</button>
+      <button data-tab="export"><span class="n">05</span>导出</button>
+    </nav>
+
+    <div class="side-foot">
+      <div class="k">数据来源（只读）</div>
+      <code id="src-transcripts">—</code>
+      <code id="src-notes">—</code>
+      <code id="src-frames">—</code>
+      <div class="k" style="margin-top:10px">最后扫描</div>
+      <code id="src-scan">—</code>
+    </div>
+  </aside>
+
+  <main>
+    <div class="top">
+      <div>
+        <h1 id="pageTitle">总览</h1>
+        <p id="pageSub">本地只读聚合 · 不读取 data/profile · 不发任何外部请求</p>
+      </div>
+      <div class="top-right">
+        <span class="scan" id="scanTime"></span>
+        <button class="btn" id="refresh">重新扫描</button>
+      </div>
+    </div>
+
+    <div id="globalBanner"></div>
+
+    <!-- 总览 -->
+    <section class="view on" id="view-overview">
+      <div class="cards" id="cards"></div>
+
+      <div class="grid2">
+        <div class="panel">
+          <h2>字幕覆盖率 <span class="tag">≥ 80% 视为可用</span></h2>
+          <div class="donut-wrap">
+            <div class="donut" id="donut"><div><b id="donutPct">—</b><small>覆盖率达标</small></div></div>
+            <div class="bars" id="bars"></div>
+          </div>
+          <div id="lowList" style="margin-top:14px"></div>
+        </div>
+
+        <div class="panel">
+          <h2>处理热力图 <span class="tag">近 365 天 · 按转写修改时间</span></h2>
+          <div class="heat" id="heat"></div>
+          <div class="legend">
+            少 <i></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i> 多
+            <span style="margin-left:auto" id="streakLabel"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel review" style="margin-top:18px">
+        <h2>随机回顾 <span class="tag">从你已有的笔记里抽一条</span>
+          <button class="btn" id="reroll" style="margin-left:auto;padding:4px 10px;font-size:12px">换一条</button>
+        </h2>
+        <div id="reviewBox" class="empty">还没有笔记可以回顾</div>
+      </div>
+    </section>
+
+    <!-- 视频 -->
+    <section class="view" id="view-videos">
+      <div class="toolbar">
+        <input type="search" id="vq" placeholder="搜索 BV 号 / 标题 / UP 主…">
+        <select id="vsort">
+          <option value="mtime">按修改时间</option>
+          <option value="coverage">按覆盖率</option>
+          <option value="title">按标题</option>
+          <option value="chars">按字数</option>
+        </select>
+        <button id="vorder" title="切换升/降序">↓ 降序</button>
+        <span class="scan" id="vcount"></span>
+      </div>
+      <div class="panel" style="padding:6px 10px">
+        <table>
+          <thead><tr>
+            <th>标题</th><th>BV</th><th>覆盖率</th><th>时长</th>
+            <th>字数</th><th>行数</th><th>笔记</th><th>修改时间</th>
+          </tr></thead>
+          <tbody id="vrows"></tbody>
+        </table>
+        <div id="vempty" class="empty" style="display:none">没有匹配的视频</div>
+      </div>
+    </section>
+
+    <!-- 笔记 -->
+    <section class="view" id="view-notes">
+      <div class="cards" id="noteCards"></div>
+
+      <div class="grid2">
+        <div class="panel">
+          <h2>新增趋势 <span class="tag">按周</span></h2>
+          <div class="trend" id="weeks"></div>
+        </div>
+        <div class="panel">
+          <h2>标签云 <span class="tag">#标签</span></h2>
+          <div class="cloud" id="cloud"></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:18px">
+        <h2>待补笔记 <span class="tag" id="todoTag">有转写但还没有笔记</span></h2>
+        <table>
+          <thead><tr><th>BV</th><th>标题</th><th>覆盖率</th><th>字幕字数</th><th>处理时间</th></tr></thead>
+          <tbody id="todoRows"></tbody>
+        </table>
+        <div id="todoEmpty" class="empty" style="display:none">没有待补笔记，全部有笔记 🎉</div>
+      </div>
+
+      <div class="panel">
+        <h2>全部笔记 <span class="tag" id="noteCount"></span></h2>
+        <div class="toolbar" style="margin-bottom:10px">
+          <input type="search" id="nq" placeholder="搜索标题 / BV / 标签…">
+        </div>
+        <table>
+          <thead><tr><th>标题</th><th>BV</th><th>标签</th><th>字数</th><th>修改时间</th><th>文件</th></tr></thead>
+          <tbody id="nrows"></tbody>
+        </table>
+        <div id="nempty" class="empty" style="display:none">没有笔记</div>
+      </div>
+    </section>
+
+    <!-- 成本 -->
+    <section class="view" id="view-costs">
+      <div id="costBanner"></div>
+      <div class="cards" id="costCards"></div>
+
+      <div class="grid2">
+        <div class="panel">
+          <h2>板书帧 <span class="tag" id="frameTag"></span></h2>
+          <table>
+            <thead><tr><th>分组</th><th>BV</th><th>帧数</th><th>体积</th><th>预估</th></tr></thead>
+            <tbody id="frameRows"></tbody>
+          </table>
+          <div id="frameEmpty" class="empty" style="display:none">帧目录为空或不存在</div>
+        </div>
+
+        <div class="panel">
+          <h2>手工成本记录 <span class="tag">dashboard/manual-costs.json</span></h2>
+          <table>
+            <thead><tr><th>月份</th><th>金额</th></tr></thead>
+            <tbody id="manualRows"></tbody>
+          </table>
+          <div id="manualEmpty" class="empty" style="display:none">暂无手工成本记录</div>
+          <div class="mono-block" style="margin-top:12px">如何启用金额估算（可选）：
+dashboard/costs.json
+{
+  "yuanPerFrame": 0.002,      // 每帧读图单价
+  "currency": "CNY"
+}
+// 或者按 token 计：
+{ "yuanPer1kTokens": 0.001, "tokensPerFrame": 1300 }
+
+dashboard/manual-costs.json
+[{ "date": "2026-10-01", "yuan": 1.2, "note": "读图" }]</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 导出 -->
+    <section class="view" id="view-export">
+      <div class="panel">
+        <h2>导出学习报告 <span class="tag">唯一写操作 · 只写 reports/</span></h2>
+        <p style="color:var(--dim);margin-top:0">
+          生成 Markdown + HTML 两份报告，文件名带时间戳，<b>不会覆盖已有文件</b>，也不会改动 transcripts / 笔记 / frames。
+        </p>
+        <button class="btn primary" id="doExport">生成报告</button>
+        <span class="scan" id="exportState"></span>
+        <div id="exportResult" style="margin-top:14px"></div>
+      </div>
+
+      <div class="panel">
+        <h2>历史报告 <span class="tag">reports/</span></h2>
+        <table>
+          <thead><tr><th>文件</th><th>大小</th><th>生成时间</th></tr></thead>
+          <tbody id="reportRows"></tbody>
+        </table>
+        <div id="reportEmpty" class="empty" style="display:none">还没有导出过报告</div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -9,7 +9,8 @@
   "scripts": {
     "doctor": "node bin/bili-learn.mjs doctor",
     "frames:pick": "node bin/bili-learn.mjs frames --pick",
-    "readme:images": "node tools/render-readme.mjs"
+    "readme:images": "node tools/render-readme.mjs",
+    "dashboard": "node dashboard/server.js"
   },
   "files": ["bin", "src", "tools", "docs", "README.md", "LICENSE"],
   "keywords": ["bilibili", "subtitles", "transcript", "notes", "cdp", "zero-dependency", "local-first"],

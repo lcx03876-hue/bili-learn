@@ -54,6 +54,20 @@ node bin/bili-learn.mjs prompt data/out/transcripts/BV1ZK7N6sEiU.md   # 生成�
 > 已有别的 DSH/自动化 profile 且已登录？可以用环境变量复用它，不必重新扫码：
 > `$env:BILI_LEARN_PROFILE='<已登录的 profile 目录>'; $env:BILI_LEARN_PORT='9444'`
 
+## 本地仪表盘（可选）
+
+转写攒多了以后，用 `dashboard/` 一眼看清家底：覆盖率分布、还没写笔记的视频、帧数与成本、一键导出报告。
+
+它**只读**本地文件：不读 `data/profile`、不调 B 站接口、不发外部请求；唯一的写操作是往 `reports/` 导出报告。
+
+```powershell
+npm run dashboard      # 等价于 node dashboard/server.js
+# 打开 http://127.0.0.1:8787
+```
+
+Windows 也可以直接双击 `dashboard/start.cmd`（会自己起服务并打开浏览器）。端口用 `PORT` 环境变量改。
+细节、配置项与 API 见 [`dashboard/README.md`](dashboard/README.md)。
+
 ## 亮点（每条都对应一个坑，详见 `docs/FAILURE-MODES.md`）
 
 1. **官方字幕优先，且校验覆盖率**——字幕轨可能只覆盖前 8 分钟，不校验就会"以为学完了"

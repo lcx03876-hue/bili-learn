@@ -1,0 +1,14 @@
+{
+  "transcriptsDir": "data/out/transcripts",
+  "framesDir": "data/frames",
+  "notesDirs": ["notes", "examples"],
+  "reportsDir": "reports",
+  "costsFile": "dashboard/costs.json",
+  "manualCostsFile": "dashboard/manual-costs.json",
+  "lowCoverageThreshold": 0.8,
+  "tagPattern": "#[\\p{L}\\p{N}_-]{1,24}",
+  "ignoreDirs": ["node_modules", ".git", "data/profile"],
+  "maxFileBytes": 4194304,
+  "maxNoteDepth": 8,
+  "scanCacheMs": 1500
+}
